@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Yori Federation Vault</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="antialiased">
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[var(--tg-theme-bg-color)]">
+        <div class="animate-spin text-4xl text-[var(--tg-theme-button-color)] mb-4">
+            <i class="ph ph-circle-notch"></i>
+        </div>
+        <div class="text-[var(--tg-theme-text-color)] font-medium text-lg">Decrypting Vault...</div>
+        <div class="absolute bottom-10 text-[var(--tg-theme-hint-color)] text-sm">Made by Yori Federation</div>
+    </div>
+
+    <!-- Lock Screen -->
+    <div id="lock-screen" class="hidden fixed inset-0 z-40 flex flex-col items-center justify-center bg-[var(--tg-theme-bg-color)] px-6">
+        <i class="ph ph-lock-key text-6xl text-[var(--tg-theme-button-color)] mb-6"></i>
+        <h2 class="text-2xl font-bold text-[var(--tg-theme-text-color)] mb-8">Enter Passcode</h2>
+        <div class="flex gap-4 mb-8" id="passcode-dots">
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-6 text-2xl font-medium text-[var(--tg-theme-text-color)]" id="numpad">
+            <!-- Rendered by JS -->
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" class="hidden flex flex-col h-screen bg-[var(--tg-theme-secondary-bg-color)]">
+        <!-- Header -->
+        <header class="bg-[var(--tg-theme-bg-color)] px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-10">
+            <div class="flex items-center gap-2 overflow-x-auto no-scrollbar whitespace-nowrap" id="breadcrumbs">
+                <!-- JS populated -->
+            </div>
+            <button id="btn-settings" class="text-[var(--tg-theme-text-color)] p-2">
+                <i class="ph ph-gear text-2xl"></i>
+            </button>
+        </header>
+
+        <!-- Content List -->
+        <main class="flex-1 overflow-y-auto p-4 pb-24" id="vault-content">
+            <!-- Grid/List injected here -->
+        </main>
+
+        <!-- Footer Branding -->
+        <div class="py-4 text-center text-xs text-[var(--tg-theme-hint-color)]">
+            Made by <a href="https://t.me/YoriFederation" target="_blank" class="text-[var(--tg-theme-button-color)]">Yori Federation</a>
+        </div>
+
+        <!-- FABs -->
+        <div class="fixed bottom-6 right-6 flex flex-col gap-3 z-20">
+            <button id="btn-create-folder" class="w-12 h-12 bg-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-text-color)] rounded-full shadow-lg flex items-center justify-center">
+                <i class="ph ph-folder-plus text-2xl"></i>
+            </button>
+            <button id="btn-upload" class="w-14 h-14 bg-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-text-color)] rounded-full shadow-lg flex items-center justify-center relative">
+                <i class="ph ph-upload-simple text-3xl"></i>
+                <input type="file" id="file-input" class="absolute inset-0 opacity-0 cursor-pointer" multiple>
+            </button>
+        </div>
+    </div>
+
+    <!-- Context Menu Overlay -->
+    <div id="context-menu" class="hidden fixed bg-[var(--tg-theme-bg-color)] shadow-xl rounded-xl py-2 z-50 border border-[var(--tg-theme-hint-color)] border-opacity-20 text-[var(--tg-theme-text-color)] text-sm min-w-[160px]">
+        <div id="ctx-download" class="px-4 py-3 flex items-center gap-3 active:bg-[var(--tg-theme-secondary-bg-color)]"><i class="ph ph-download-simple text-lg"></i> Download</div>
+        <div id="ctx-delete" class="px-4 py-3 flex items-center gap-3 text-red-500 active:bg-[var(--tg-theme-secondary-bg-color)]"><i class="ph ph-trash text-lg"></i> Delete</div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
