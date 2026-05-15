@@ -35,7 +35,6 @@ async function init() {
     }
 }
 
-// Passcode Logic
 function showLockScreen() {
     document.getElementById('lock-screen').classList.remove('hidden');
     const numpad = document.getElementById('numpad');
@@ -64,7 +63,6 @@ async function handleNumpad(val) {
     updatePasscodeUI();
     
     if (passcodeBuffer.length === 4) {
-        // verify
         try {
             const res = await fetch(`${API_BASE}/lock/verify`, {
                 method: 'POST',
@@ -103,7 +101,6 @@ function updatePasscodeUI() {
     }
 }
 
-// Vault Logic
 async function api(path, options = {}) {
     options.headers = { ...options.headers, 'Authorization': `Bearer ${jwtToken}` };
     const res = await fetch(`${API_BASE}${path}`, options);
@@ -181,7 +178,6 @@ function renderContent(folders, files) {
         
         el.onclick = () => loadFolder(f.id);
         
-        // Context Menu handling
         const bindContextMenu = (e) => {
             e.preventDefault();
             showContextMenu(e.pageX || e.touches[0].pageX, e.pageY || e.touches[0].pageY, 'folder', f.id, f.name);
@@ -203,8 +199,10 @@ function renderContent(folders, files) {
                         <span class="text-sm font-medium text-center line-clamp-1 w-full truncate mb-1">${f.name}</span>
                         <span class="text-xs text-[var(--tg-theme-hint-color)]">${formatBytes(f.size)}</span>`;
         
+        // THIS IS THE FIX FOR DOWNLOADING
         const downloadAction = () => {
-            window.location.href = `${API_BASE}/files/download/${f.id}?token=${jwtToken}`;
+            const dlUrl = `${window.location.origin}${API_BASE}/files/download/${f.id}?token=${jwtToken}`;
+            tg.openLink(dlUrl);
         };
         
         el.onclick = downloadAction;
@@ -226,7 +224,6 @@ function renderContent(folders, files) {
     container.appendChild(grid);
 }
 
-// Context Menu Logic
 function showContextMenu(x, y, type, id, name, downloadCb) {
     tg.HapticFeedback.impactOccurred('medium');
     const menu = document.getElementById('context-menu');
@@ -259,33 +256,21 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Create Folder
 document.getElementById('btn-create-folder').onclick = () => {
-    tg.showPopup({
-        title: "New Folder",
-        message: "Enter folder name:",
-        buttons: [{id: "create", type: "default", text: "Create"}]
-    }, async (btnId) => {
-        // Native popup doesn't have text input, fall back to browser prompt securely.
-        // For a full native experience we'd build a DOM modal, but window.prompt is okay for quick execution.
-        const name = window.prompt("Folder Name:");
-        if (name) {
-            await api('/folders', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, parent_id: currentFolderId })
-            });
-            loadFolder(currentFolderId);
-        }
-    });
+    const name = window.prompt("Folder Name:");
+    if (name) {
+        api('/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, parent_id: currentFolderId })
+        }).then(() => loadFolder(currentFolderId));
+    }
 };
 
-// Upload Flow
 document.getElementById('file-input').onchange = async (e) => {
     const files = e.target.files;
     if(files.length === 0) return;
 
-    // Simple loading state
     tg.MainButton.setText("Uploading...").show().showProgress();
 
     for(let file of files) {
@@ -302,27 +287,7 @@ document.getElementById('file-input').onchange = async (e) => {
 
     tg.MainButton.hide();
     loadFolder(currentFolderId);
-    e.target.value = ''; // reset
-};
-
-// Settings / Share Link View
-document.getElementById('btn-settings').onclick = async () => {
-    const info = await api('/share/info');
-    const shareUrl = `${window.location.origin}/share/${info.share_token}`;
-    
-    tg.showPopup({
-        title: "Vault Settings",
-        message: `Your Public Share Link:\n\n${shareUrl}\n\nAnyone with this link can view your vault.`,
-        buttons: [
-            { id: "copy", type: "default", text: "Copy Link" },
-            { id: "close", type: "cancel" }
-        ]
-    }, (id) => {
-        if(id === "copy") {
-            navigator.clipboard.writeText(shareUrl);
-            tg.showAlert("Link copied to clipboard!");
-        }
-    });
+    e.target.value = '';
 };
 
 init();
