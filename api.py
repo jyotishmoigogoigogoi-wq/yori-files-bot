@@ -31,6 +31,13 @@ async def verify_lock(req: PasscodeRequest, user=Depends(get_current_user)):
         return {"success": True, "token": create_jwt(user["tg_id"], True)}
     raise HTTPException(status_code=401)
 
+@router.post("/api/lock/set")
+async def set_lock(req: PasscodeRequest, user=Depends(get_current_user)):
+    if not user["unlocked"]: raise HTTPException(status_code=403)
+    hashed = hash_passcode(req.passcode) if req.passcode else None
+    await users_col.update_one({"tg_id": user["tg_id"]}, {"$set": {"passcode_hash": hashed}})
+    return {"success": True}
+
 @router.get("/api/user")
 async def get_user_info(user=Depends(get_current_user)):
     user_db = await users_col.find_one({"tg_id": user["tg_id"]})
@@ -53,6 +60,12 @@ async def get_vault(folder_id: Optional[str] = None, user=Depends(get_current_us
         "breadcrumbs": breadcrumbs
     }
 
+@router.get("/api/folders/all")
+async def get_all_folders(user=Depends(get_current_user)):
+    if not user["unlocked"]: raise HTTPException(403)
+    folders = await folders_col.find({"owner_id": user["tg_id"]}).to_list(None)
+    return [{"id": f["id"], "name": f["name"], "parent_id": f.get("parent_id")} for f in folders]
+
 class FolderCreate(BaseModel): name: str; parent_id: Optional[str] = None
 @router.post("/api/folders")
 async def create_folder(req: FolderCreate, user=Depends(get_current_user)):
@@ -69,26 +82,18 @@ async def rename_item(type: str, id: str, req: RenameReq, user=Depends(get_curre
     else: await folders_col.update_one({"id": id, "owner_id": user["tg_id"]}, {"$set": {"name": req.name}})
     return {"success": True}
 
-class PasteReq(BaseModel): target_folder: Optional[str] = None; items: List[dict] # {id, type, action: cut/copy}
-@router.post("/api/paste")
-async def paste_items(req: PasteReq, user=Depends(get_current_user)):
+class MoveReq(BaseModel): target_folder: Optional[str] = None; file_ids: List[str] = []; folder_ids: List[str] = []
+@router.post("/api/move")
+async def move_items(req: MoveReq, user=Depends(get_current_user)):
     if not user["unlocked"]: raise HTTPException(403)
-    user_db = await users_col.find_one({"tg_id": user["tg_id"]})
     
-    for item in req.items:
-        if item["type"] == "file":
-            f = await files_col.find_one({"id": item["id"], "owner_id": user["tg_id"]})
-            if not f: continue
-            if item["action"] == "cut":
-                await files_col.update_one({"id": item["id"]}, {"$set": {"folder_id": req.target_folder}})
-            elif item["action"] == "copy":
-                if user_db["storage_used"] + f["size"] > user_db["storage_limit"]: continue
-                new_f = f.copy(); new_f["id"] = VaultFile().id; new_f["folder_id"] = req.target_folder; new_f.pop("_id")
-                await files_col.insert_one(new_f)
-                await users_col.update_one({"tg_id": user["tg_id"]}, {"$inc": {"storage_used": f["size"]}})
-                user_db["storage_used"] += f["size"]
-        elif item["type"] == "folder" and item["action"] == "cut":
-            await folders_col.update_one({"id": item["id"], "owner_id": user["tg_id"]}, {"$set": {"parent_id": req.target_folder}})
+    if req.file_ids:
+        await files_col.update_many({"id": {"$in": req.file_ids}, "owner_id": user["tg_id"]}, {"$set": {"folder_id": req.target_folder}})
+        
+    safe_folder_ids = [fid for fid in req.folder_ids if fid != req.target_folder]
+    if safe_folder_ids:
+        await folders_col.update_many({"id": {"$in": safe_folder_ids}, "owner_id": user["tg_id"]}, {"$set": {"parent_id": req.target_folder}})
+        
     return {"success": True}
 
 @router.post("/api/files/upload")
@@ -146,6 +151,43 @@ async def download_file(file_id: str, token: str):
                 async for chunk in resp.aiter_bytes(): yield chunk
     return StreamingResponse(stream(), media_type=f["mime_type"], headers={"Content-Disposition": f'attachment; filename="{f["filename"]}"'})
 
+@router.get("/api/bulk/zip")
+async def download_bulk_zip(ids: str, token: str):
+    from utils import decode_jwt
+    payload = decode_jwt(token)
+    if not payload or not payload.get("unlocked"): raise HTTPException(status_code=403)
+    
+    user_tg_id = int(payload["sub"])
+    file_ids = [fid for fid in ids.split(",") if fid.strip()]
+    if not file_ids: raise HTTPException(status_code=400, detail="No files selected")
+    
+    temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    
+    try:
+        with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for f_id in file_ids:
+                file_record = await files_col.find_one({"id": f_id, "owner_id": user_tg_id})
+                if not file_record: continue
+                
+                tg_file = await bot.get_file(file_record["file_id"])
+                file_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{tg_file.file_path}"
+                
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(file_url)
+                    if resp.status_code == 200:
+                        zipf.writestr(file_record["filename"], resp.content)
+                        
+        async def iterfile():
+            with open(temp_zip.name, mode="rb") as file_data:
+                chunk = file_data.read(1024 * 1024)
+                while chunk: yield chunk; chunk = file_data.read(1024 * 1024)
+            os.remove(temp_zip.name) 
+            
+        return StreamingResponse(iterfile(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="Yori_Vault_Export.zip"'})
+    except Exception as e:
+        if os.path.exists(temp_zip.name): os.remove(temp_zip.name)
+        raise HTTPException(status_code=500, detail="Error zipping files")
+
 # --- ADMIN ROUTES ---
 @router.get("/api/admin/data")
 async def get_admin_data(user=Depends(get_current_user)):
@@ -153,32 +195,21 @@ async def get_admin_data(user=Depends(get_current_user)):
     users = await users_col.find({}, {"tg_id": 1, "storage_used": 1, "storage_limit": 1, "username": 1}).to_list(None)
     for u in users: 
         u["_id"] = str(u["_id"])
-        # FIX: Ensure old users display 50GB default in Admin Panel
-        if "storage_limit" not in u:
-            u["storage_limit"] = 50 * 1024 * 1024 * 1024
-            
+        if "storage_limit" not in u: u["storage_limit"] = 50 * 1024 * 1024 * 1024
     return {"total_users": len(users), "total_used": sum(u.get("storage_used", 0) for u in users), "users": users}
 
 class GrantReq(BaseModel): tg_id: int; gb: int
 @router.post("/api/admin/grant")
 async def grant_storage(req: GrantReq, user=Depends(get_current_user)):
     if user["tg_id"] != ADMIN_ID: raise HTTPException(403)
-    
-    # 1. Find the target user
     target_user = await users_col.find_one({"tg_id": req.tg_id})
     if not target_user: raise HTTPException(404, "User not found")
     
-    # 2. FIX: Safely get current limit (Default to 50GB if they are an old user)
     current_limit = target_user.get("storage_limit", 50 * 1024 * 1024 * 1024)
-    bytes_to_add = req.gb * 1024 * 1024 * 1024
-    new_limit = current_limit + bytes_to_add
-    
-    # 3. Save the new combined limit
-    res = await users_col.update_one({"tg_id": req.tg_id}, {"$set": {"storage_limit": new_limit}})
+    res = await users_col.update_one({"tg_id": req.tg_id}, {"$set": {"storage_limit": current_limit + (req.gb * 1024 * 1024 * 1024)}})
     
     if res.modified_count or res.matched_count:
         try: await bot.send_message(req.tg_id, f"🎉 <b>Premium Upgrade!</b>\n\nYou have got an extra <b>{req.gb} GB</b> of storage!\nThank you for supporting 💕 @yorifederation", parse_mode="HTML")
         except: pass
         return {"success": True}
-        
     raise HTTPException(404, "User not found")
