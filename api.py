@@ -1,27 +1,20 @@
+import os
+import tempfile
+import zipfile
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
-import zipfile
-import io
+from typing import Optional, List
 from config import settings
 from db import users_col, folders_col, files_col
 from models import Folder, VaultFile
 from utils import validate_init_data, create_jwt, get_current_user, hash_passcode, verify_passcode
 from bot import bot
 from aiogram.types import BufferedInputFile
-import httpx
 
 router = APIRouter()
 
-# ------------------- Constants -------------------
-MAX_FILE_SIZE_MB = 50
-MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-
-MAX_BULK_FILES = 20
-MAX_BULK_SIZE_BYTES = 50 * 1024 * 1024
-
-# ------------------- Auth -------------------
 class AuthRequest(BaseModel):
     initData: str
 
@@ -41,7 +34,6 @@ async def authenticate(req: AuthRequest):
     token = create_jwt(tg_id, unlocked=not has_passcode)
     return {"token": token, "has_passcode": has_passcode}
 
-# ------------------- Passcode Lock -------------------
 class PasscodeRequest(BaseModel):
     passcode: str
 
@@ -63,7 +55,6 @@ async def set_lock(req: PasscodeRequest, user=Depends(get_current_user)):
     await users_col.update_one({"tg_id": user["tg_id"]}, {"$set": {"passcode_hash": hashed}})
     return {"success": True}
 
-# ------------------- Vault Listing -------------------
 @router.get("/api/vault")
 async def get_vault(folder_id: Optional[str] = None, user=Depends(get_current_user)):
     if not user["unlocked"]:
@@ -72,7 +63,6 @@ async def get_vault(folder_id: Optional[str] = None, user=Depends(get_current_us
     folders = await folders_col.find({"owner_id": user["tg_id"], "parent_id": folder_id}).to_list(None)
     files = await files_col.find({"owner_id": user["tg_id"], "folder_id": folder_id}).to_list(None)
     
-    # Breadcrumbs
     breadcrumbs = []
     current_id = folder_id
     while current_id:
@@ -89,7 +79,6 @@ async def get_vault(folder_id: Optional[str] = None, user=Depends(get_current_us
         "breadcrumbs": breadcrumbs
     }
 
-# ------------------- Folder Management -------------------
 class FolderCreate(BaseModel):
     name: str
     parent_id: Optional[str] = None
@@ -117,22 +106,14 @@ async def delete_folder(folder_id: str, user=Depends(get_current_user)):
     await delete_recursive(folder_id)
     return {"success": True}
 
-# ------------------- File Upload (with size limit) -------------------
 @router.post("/api/files/upload")
 async def upload_file_api(file: UploadFile = File(...), folder_id: Optional[str] = Form(None), user=Depends(get_current_user)):
     if not user["unlocked"]:
         raise HTTPException(status_code=403, detail="Vault is locked")
-    
-    # Read file content and check size
+        
     content = await file.read()
-    file_size = len(content)
-    if file_size > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB} MB. Your file is {file_size / (1024*1024):.1f} MB."
-        )
-    
     input_file = BufferedInputFile(content, filename=file.filename)
+    
     msg = await bot.send_document(chat_id=settings.STORAGE_CHANNEL_ID, document=input_file)
     
     new_file = VaultFile(
@@ -140,7 +121,7 @@ async def upload_file_api(file: UploadFile = File(...), folder_id: Optional[str]
         folder_id=folder_id if folder_id != "null" else None,
         filename=file.filename,
         mime_type=file.content_type or "application/octet-stream",
-        size=file_size,
+        size=len(content),
         file_id=msg.document.file_id,
         file_unique_id=msg.document.file_unique_id,
         message_id=msg.message_id
@@ -148,21 +129,17 @@ async def upload_file_api(file: UploadFile = File(...), folder_id: Optional[str]
     await files_col.insert_one(new_file.model_dump())
     return {"success": True, "id": new_file.id}
 
-# ------------------- File Delete -------------------
 @router.delete("/api/files/{file_id}")
 async def delete_file(file_id: str, user=Depends(get_current_user)):
-    if not user["unlocked"]: 
-        raise HTTPException(status_code=403)
+    if not user["unlocked"]: raise HTTPException(status_code=403)
     file_record = await files_col.find_one({"id": file_id, "owner_id": user["tg_id"]})
     if file_record:
         try:
             await bot.delete_message(chat_id=settings.STORAGE_CHANNEL_ID, message_id=file_record["message_id"])
-        except:
-            pass
+        except: pass 
         await files_col.delete_one({"id": file_id})
     return {"success": True}
 
-# ------------------- Single File Download -------------------
 @router.get("/api/files/download/{file_id}")
 async def download_file(file_id: str, token: str):
     from utils import decode_jwt
@@ -189,66 +166,72 @@ async def download_file(file_id: str, token: str):
         headers={"Content-Disposition": f'attachment; filename="{file_record["filename"]}"'}
     )
 
-# ------------------- Bulk Download (ZIP) with Limits -------------------
-class BulkDownloadRequest(BaseModel):
-    file_ids: list[str]
+class BulkDeleteRequest(BaseModel):
+    file_ids: List[str] = []
+    folder_ids: List[str] = []
 
-@router.post("/api/files/bulk-download")
-async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current_user)):
-    if not user["unlocked"]:
-        raise HTTPException(status_code=403, detail="Vault is locked")
+@router.post("/api/bulk/delete")
+async def bulk_delete(req: BulkDeleteRequest, user=Depends(get_current_user)):
+    if not user["unlocked"]: raise HTTPException(status_code=403)
     
-    if not req.file_ids:
-        raise HTTPException(status_code=400, detail="No file IDs provided")
-    
-    if len(req.file_ids) > MAX_BULK_FILES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many files selected. Maximum {MAX_BULK_FILES} files per ZIP download."
-        )
-    
-    file_records = await files_col.find({
-        "id": {"$in": req.file_ids},
-        "owner_id": user["tg_id"]
-    }).to_list(None)
-    
-    if not file_records:
-        raise HTTPException(status_code=404, detail="No files found")
-    
-    total_size = sum(f["size"] for f in file_records)
-    if total_size > MAX_BULK_SIZE_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Total file size ({total_size / (1024*1024):.1f} MB) exceeds limit of 50 MB. Please select fewer or smaller files."
-        )
-    
-    # Create ZIP in memory
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for file_record in file_records:
+    async def delete_recursive(f_id: str):
+        sub = await folders_col.find({"parent_id": f_id}).to_list(None)
+        for sf in sub: await delete_recursive(sf["id"])
+        await files_col.delete_many({"folder_id": f_id})
+        await folders_col.delete_one({"id": f_id})
+
+    for folder_id in req.folder_ids:
+        await delete_recursive(folder_id)
+
+    for file_id in req.file_ids:
+        file_record = await files_col.find_one({"id": file_id, "owner_id": user["tg_id"]})
+        if file_record:
             try:
+                await bot.delete_message(chat_id=settings.STORAGE_CHANNEL_ID, message_id=file_record["message_id"])
+            except: pass
+            await files_col.delete_one({"id": file_id})
+            
+    return {"success": True}
+
+@router.get("/api/bulk/zip")
+async def download_bulk_zip(ids: str, token: str):
+    from utils import decode_jwt
+    payload = decode_jwt(token)
+    if not payload or not payload.get("unlocked"):
+        raise HTTPException(status_code=403)
+    
+    user_tg_id = int(payload["sub"])
+    file_ids = ids.split(",")
+    
+    temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    
+    try:
+        with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for f_id in file_ids:
+                file_record = await files_col.find_one({"id": f_id, "owner_id": user_tg_id})
+                if not file_record: continue
+                
                 tg_file = await bot.get_file(file_record["file_id"])
                 file_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{tg_file.file_path}"
+                
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(file_url)
-                    if response.status_code == 200:
-                        zip_file.writestr(file_record["filename"], response.content)
-                    else:
-                        zip_file.writestr(f"ERROR_{file_record['filename']}", f"Failed to download: HTTP {response.status_code}")
-            except Exception as e:
-                zip_file.writestr(f"ERROR_{file_record['filename']}", f"Download error: {str(e)}")
-    
-    zip_buffer.seek(0)
-    return StreamingResponse(
-        zip_buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=vault_export.zip"}
-    )
-
-# ------------------- Share Info -------------------
-@router.get("/api/share/info")
-async def get_share_info(user=Depends(get_current_user)):
-    if not user["unlocked"]: 
-        raise HTTPException(status_code=403)
-    user_db = await users_col.find_one({"tg_id": user["tg_id"]})
-    return {"share_token": user_db["share_token"]}
+                    resp = await client.get(file_url)
+                    if resp.status_code == 200:
+                        zipf.writestr(file_record["filename"], resp.content)
+                        
+        async def iterfile():
+            with open(temp_zip.name, mode="rb") as file_data:
+                chunk = file_data.read(1024 * 1024)
+                while chunk:
+                    yield chunk
+                    chunk = file_data.read(1024 * 1024)
+            os.remove(temp_zip.name) 
+            
+        return StreamingResponse(
+            iterfile(), 
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="Yori_Vault_Export.zip"'}
+        )
+    except Exception as e:
+        os.remove(temp_zip.name)
+        raise HTTPException(status_code=500, detail="Error zipping files")
