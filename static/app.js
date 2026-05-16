@@ -11,20 +11,12 @@ async function init() {
         const res = await fetch(`${API_BASE}/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData }) });
         const data = await res.json();
         jwtToken = data.token;
-        
         document.getElementById('loading-screen').classList.add('hidden');
-        
-        if (data.has_passcode) {
-            showLockScreen();
-        } else {
-            document.getElementById('app').classList.remove('hidden');
-            await updateStorage();
-            loadFolder(null);
-        }
+        if (data.has_passcode) showLockScreen();
+        else { document.getElementById('app').classList.remove('hidden'); await updateStorage(); loadFolder(null); }
     } catch (e) { tg.showAlert("Auth error."); }
 }
 
-// PASSCODE LOGIC
 function showLockScreen() {
     document.getElementById('lock-screen').classList.remove('hidden');
     const numpad = document.getElementById('numpad');
@@ -33,16 +25,13 @@ function showLockScreen() {
         const btn = document.createElement('div');
         if (num === '') { numpad.appendChild(btn); return; }
         btn.className = 'w-16 h-16 rounded-full flex items-center justify-center bg-[var(--tg-theme-secondary-bg-color)] active:bg-[var(--tg-theme-hint-color)] mx-auto cursor-pointer';
-        btn.innerText = num;
-        btn.onclick = () => handleNumpad(num);
-        numpad.appendChild(btn);
+        btn.innerText = num; btn.onclick = () => handleNumpad(num); numpad.appendChild(btn);
     });
 }
 async function handleNumpad(val) {
     if (val === '⌫') passcodeBuffer = passcodeBuffer.slice(0, -1);
     else if (passcodeBuffer.length < 4) passcodeBuffer += val;
     updatePasscodeUI();
-    
     if (passcodeBuffer.length === 4) {
         try {
             const res = await fetch(`${API_BASE}/lock/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwtToken}` }, body: JSON.stringify({ passcode: passcodeBuffer }) });
@@ -51,10 +40,7 @@ async function handleNumpad(val) {
                 document.getElementById('lock-screen').classList.add('hidden');
                 document.getElementById('app').classList.remove('hidden');
                 await updateStorage(); loadFolder(null);
-            } else {
-                tg.HapticFeedback.notificationOccurred('error');
-                passcodeBuffer = ""; updatePasscodeUI();
-            }
+            } else { tg.HapticFeedback.notificationOccurred('error'); passcodeBuffer = ""; updatePasscodeUI(); }
         } catch(e) { passcodeBuffer = ""; updatePasscodeUI(); }
     }
 }
@@ -95,7 +81,6 @@ document.getElementById('btn-store').onclick = () => document.getElementById('st
 async function loadFolder(folderId) {
     currentFolderId = folderId;
     document.getElementById('vault-content').innerHTML = `<div class="flex justify-center items-center h-40"><i class="ph ph-spinner animate-spin text-4xl text-[var(--tg-theme-button-color)]"></i></div>`;
-    
     const data = await api(`/vault${folderId ? '?folder_id='+folderId : ''}`);
     rawFolders = data.folders; rawFiles = data.files;
     
@@ -105,14 +90,12 @@ async function loadFolder(folderId) {
         bc.innerHTML += `<i class="ph ph-caret-right text-[var(--tg-theme-hint-color)] mx-1"></i>`;
         bc.innerHTML += `<div class="cursor-pointer ${i===data.breadcrumbs.length-1?'text-[var(--tg-theme-text-color)] font-bold':'text-[var(--tg-theme-button-color)]'}" onclick="loadFolder('${b.id}')">${b.name}</div>`;
     });
-    
     renderContent();
 }
 
 function renderContent() {
     const query = document.getElementById('search-input').value.toLowerCase();
     const sortMode = document.getElementById('sort-select').value;
-    
     let fld = rawFolders.filter(f => f.name.toLowerCase().includes(query));
     let fil = rawFiles.filter(f => f.name.toLowerCase().includes(query));
     
@@ -142,12 +125,15 @@ function renderContent() {
         el.innerHTML = `<div class="checkbox-indicator absolute top-2 right-2 pointer-events-none"></div><i class="ph ${getIconForMime(f.mime_type)} text-5xl text-gray-400 mb-2 pointer-events-none"></i><span class="text-xs font-medium line-clamp-2 pointer-events-none">${f.name}</span><span class="text-[10px] text-[var(--tg-theme-hint-color)] mt-1 pointer-events-none">${formatBytes(f.size)}</span>`;
         el.onclick = () => {
             if(selectMode) return toggleSelection('file', f.id, el);
-            const dlUrl = `${window.location.origin}${API_BASE}/files/download/${f.id}?token=${jwtToken}`;
             if(f.mime_type.startsWith('image/')) {
-                document.getElementById('iv-img').src = dlUrl; document.getElementById('iv-name').innerText = f.name; document.getElementById('iv-dl').onclick = () => tg.openLink(dlUrl); document.getElementById('image-viewer').classList.remove('hidden');
+                document.getElementById('iv-img').src = `${window.location.origin}${API_BASE}/files/download/${f.id}?token=${jwtToken}`;
+                document.getElementById('iv-name').innerText = f.name; 
+                document.getElementById('iv-export').onclick = () => exportItems([f.id], []); 
+                document.getElementById('image-viewer').classList.remove('hidden');
             } else if(f.mime_type.startsWith('audio/')) {
-                const au = document.getElementById('ap-audio'); au.src = dlUrl; au.play(); document.getElementById('ap-name').innerText = f.name; document.getElementById('audio-player').classList.remove('hidden');
-            } else tg.openLink(dlUrl);
+                const au = document.getElementById('ap-audio'); au.src = `${window.location.origin}${API_BASE}/files/download/${f.id}?token=${jwtToken}`; au.play(); 
+                document.getElementById('ap-name').innerText = f.name; document.getElementById('audio-player').classList.remove('hidden');
+            } else exportItems([f.id], []);
         };
         bindContextMenu(el, 'file', f.id, f.name);
         grid.appendChild(el);
@@ -167,8 +153,7 @@ function bindContextMenu(el, type, id, name) {
         menu.style.left = `${Math.min(e.pageX||e.touches[0].pageX, window.innerWidth-170)}px`;
         menu.style.top = `${Math.min(e.pageY||e.touches[0].pageY, window.innerHeight-150)}px`;
         menu.classList.remove('hidden');
-        document.getElementById('ctx-download').classList.toggle('hidden', type==='folder');
-        document.getElementById('ctx-download').onclick = () => { menu.classList.add('hidden'); tg.openLink(`${window.location.origin}${API_BASE}/files/download/${id}?token=${jwtToken}`); };
+        document.getElementById('ctx-export').onclick = () => { menu.classList.add('hidden'); exportItems(type==='file'?[id]:[], type==='folder'?[id]:[]); };
         document.getElementById('ctx-delete').onclick = async () => { menu.classList.add('hidden'); tg.showConfirm("Delete?", async(ok)=>{ if(ok){ await api(type==='folder'?`/folders/${id}`:`/files/${id}`,{method:'DELETE'}); updateStorage(); loadFolder(currentFolderId); } }); };
         document.getElementById('ctx-rename').onclick = () => { menu.classList.add('hidden'); const nn = prompt("New name:", name); if(nn) api(`/rename/${type}/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:nn})}).then(()=>loadFolder(currentFolderId)); };
     };
@@ -190,18 +175,13 @@ function toggleSelection(type, id, el) {
     }
     const set = type === 'folder' ? selectedFolders : selectedFiles;
     if (set.has(id)) { 
-        set.delete(id); 
-        el.classList.remove('ring-2', 'ring-[var(--tg-theme-button-color)]'); 
-        el.querySelector('.checkbox-indicator').innerHTML = ''; 
+        set.delete(id); el.classList.remove('ring-2', 'ring-[var(--tg-theme-button-color)]'); el.querySelector('.checkbox-indicator').innerHTML = ''; 
     } else { 
-        set.add(id); 
-        el.classList.add('ring-2', 'ring-[var(--tg-theme-button-color)]'); 
-        el.querySelector('.checkbox-indicator').innerHTML = '<i class="ph ph-check-circle text-2xl text-[var(--tg-theme-button-color)] bg-white rounded-full"></i>'; 
+        set.add(id); el.classList.add('ring-2', 'ring-[var(--tg-theme-button-color)]'); el.querySelector('.checkbox-indicator').innerHTML = '<i class="ph ph-check-circle text-2xl text-[var(--tg-theme-button-color)] bg-white rounded-full"></i>'; 
     }
     document.getElementById('selected-count').innerText = selectedFiles.size + selectedFolders.size;
     if (selectedFiles.size===0 && selectedFolders.size===0) cancelSelection();
 }
-
 function cancelSelection() { 
     selectMode = false; selectedFiles.clear(); selectedFolders.clear(); 
     document.getElementById('main-header').classList.remove('hidden');
@@ -212,6 +192,21 @@ function cancelSelection() {
     document.querySelectorAll('.ring-2').forEach(el => { el.classList.remove('ring-2', 'ring-[var(--tg-theme-button-color)]'); el.querySelector('.checkbox-indicator').innerHTML = ''; });
 }
 
+// NATIVE EXPORT SYSTEM (Send to Chat)
+async function exportItems(fileIds, folderIds) {
+    if (fileIds.length === 0 && folderIds.length === 0) return;
+    tg.showAlert("✅ Items are being sent to your Telegram Chat! Check your messages.");
+    closeViewer(); closeAudio(); cancelSelection();
+    await api('/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_ids: fileIds, folder_ids: folderIds })
+    });
+}
+
+document.getElementById('btn-export').onclick = () => exportItems(Array.from(selectedFiles), Array.from(selectedFolders));
+
+// MOVE SYSTEM
 let allFoldersCache = [], targetMoveFolder = null;
 document.getElementById('btn-move').onclick = async () => {
     tg.MainButton.setText("Loading...").show().showProgress();
@@ -220,7 +215,6 @@ document.getElementById('btn-move').onclick = async () => {
     document.getElementById('move-modal').classList.remove('hidden');
     setTimeout(() => document.getElementById('move-modal-content').classList.remove('translate-y-full'), 10);
 };
-
 function renderMoveModal() {
     const list = document.getElementById('move-folder-list');
     list.innerHTML = `<div class="p-4 mb-2 rounded-xl flex items-center gap-3 cursor-pointer ${targetMoveFolder === null ? 'bg-[var(--tg-theme-button-color)] text-white shadow' : 'bg-gray-100 text-gray-800'}" onclick="setTargetMoveFolder(null)"><i class="ph ph-house text-2xl"></i><span class="font-bold">Root Directory</span></div>`;
@@ -239,9 +233,8 @@ document.getElementById('btn-confirm-move').onclick = async () => {
     tg.MainButton.hide(); cancelSelection(); loadFolder(currentFolderId);
 };
 
+// UPLOADS & ACTIONS
 document.getElementById('btn-bulk-delete').onclick = () => { tg.showConfirm(`Delete items?`, async (ok) => { if(ok) { await api('/bulk/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ file_ids: Array.from(selectedFiles), folder_ids: Array.from(selectedFolders) }) }); updateStorage(); cancelSelection(); loadFolder(currentFolderId); } }); };
-document.getElementById('btn-zip').onclick = () => { if (selectedFiles.size === 0) { return tg.showAlert("Please select files to ZIP."); } const ids = Array.from(selectedFiles).join(','); tg.openLink(`${window.location.origin}${API_BASE}/bulk/zip?ids=${ids}&token=${jwtToken}`); cancelSelection(); };
-
 document.getElementById('btn-create-folder').onclick = () => { const name = prompt("Folder Name:"); if(name) api('/folders', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, parent_id:currentFolderId})}).then(()=>loadFolder(currentFolderId)); };
 document.getElementById('file-input').onchange = async (e) => {
     const files = e.target.files; if(!files.length) return;
