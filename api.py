@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
+import zipfile
+import io
 from config import settings
 from db import users_col, folders_col, files_col
 from models import Folder, VaultFile
@@ -167,6 +169,79 @@ async def download_file(file_id: str, token: str):
         stream(), 
         media_type=file_record["mime_type"],
         headers={"Content-Disposition": f'attachment; filename="{file_record["filename"]}"'}
+    )
+
+# ---------- Bulk Download (ZIP) with Limits ----------
+class BulkDownloadRequest(BaseModel):
+    file_ids: list[str]
+
+MAX_BULK_FILES = 20
+MAX_BULK_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+@router.post("/api/files/bulk-download")
+async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current_user)):
+    if not user["unlocked"]:
+        raise HTTPException(status_code=403, detail="Vault is locked")
+    
+    if not req.file_ids:
+        raise HTTPException(status_code=400, detail="No file IDs provided")
+    
+    # Limit number of files
+    if len(req.file_ids) > MAX_BULK_FILES:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Too many files selected. Maximum {MAX_BULK_FILES} files per ZIP download."
+        )
+    
+    # Fetch all file records for the user
+    file_records = await files_col.find({
+        "id": {"$in": req.file_ids},
+        "owner_id": user["tg_id"]
+    }).to_list(None)
+    
+    if not file_records:
+        raise HTTPException(status_code=404, detail="No files found")
+    
+    # Check total size
+    total_size = sum(f["size"] for f in file_records)
+    if total_size > MAX_BULK_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Total file size ({total_size / (1024*1024):.1f} MB) exceeds limit of 50 MB. Please select fewer or smaller files."
+        )
+    
+    # Create in-memory ZIP
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for file_record in file_records:
+            try:
+                # Get file from Telegram
+                tg_file = await bot.get_file(file_record["file_id"])
+                file_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{tg_file.file_path}"
+                
+                # Download file content
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(file_url)
+                    if response.status_code == 200:
+                        zip_file.writestr(file_record["filename"], response.content)
+                    else:
+                        zip_file.writestr(f"ERROR_{file_record['filename']}", f"Failed to download: HTTP {response.status_code}")
+            except Exception as e:
+                zip_file.writestr(f"ERROR_{file_record['filename']}", f"Download error: {str(e)}")
+    
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=vault_export.zip"}
+    )
+    # Prepare ZIP response
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=vault_export.zip"}
     )
 
 @router.get("/api/share/info")
