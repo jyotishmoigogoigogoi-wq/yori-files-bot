@@ -1,7 +1,7 @@
 const tg = window.Telegram.WebApp;
 tg.expand(); tg.ready();
 
-let jwtToken = null, currentFolderId = null;
+let jwtToken = null, currentFolderId = null, passcodeBuffer = "";
 let selectMode = false, selectedFiles = new Set(), selectedFolders = new Set();
 let rawFolders = [], rawFiles = [];
 const API_BASE = '/api';
@@ -11,9 +11,59 @@ async function init() {
         const res = await fetch(`${API_BASE}/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData }) });
         const data = await res.json();
         jwtToken = data.token;
-        await updateStorage();
-        loadFolder(null);
+        
+        document.getElementById('loading-screen').classList.add('hidden');
+        
+        if (data.has_passcode) {
+            showLockScreen();
+        } else {
+            document.getElementById('app').classList.remove('hidden');
+            await updateStorage();
+            loadFolder(null);
+        }
     } catch (e) { tg.showAlert("Auth error."); }
+}
+
+// PASSCODE LOGIC
+function showLockScreen() {
+    document.getElementById('lock-screen').classList.remove('hidden');
+    const numpad = document.getElementById('numpad');
+    numpad.innerHTML = '';
+    [1,2,3,4,5,6,7,8,9,'',0,'⌫'].forEach(num => {
+        const btn = document.createElement('div');
+        if (num === '') { numpad.appendChild(btn); return; }
+        btn.className = 'w-16 h-16 rounded-full flex items-center justify-center bg-[var(--tg-theme-secondary-bg-color)] active:bg-[var(--tg-theme-hint-color)] mx-auto cursor-pointer';
+        btn.innerText = num;
+        btn.onclick = () => handleNumpad(num);
+        numpad.appendChild(btn);
+    });
+}
+async function handleNumpad(val) {
+    if (val === '⌫') passcodeBuffer = passcodeBuffer.slice(0, -1);
+    else if (passcodeBuffer.length < 4) passcodeBuffer += val;
+    updatePasscodeUI();
+    
+    if (passcodeBuffer.length === 4) {
+        try {
+            const res = await fetch(`${API_BASE}/lock/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwtToken}` }, body: JSON.stringify({ passcode: passcodeBuffer }) });
+            if (res.ok) {
+                const data = await res.json(); jwtToken = data.token;
+                document.getElementById('lock-screen').classList.add('hidden');
+                document.getElementById('app').classList.remove('hidden');
+                await updateStorage(); loadFolder(null);
+            } else {
+                tg.HapticFeedback.notificationOccurred('error');
+                passcodeBuffer = ""; updatePasscodeUI();
+            }
+        } catch(e) { passcodeBuffer = ""; updatePasscodeUI(); }
+    }
+}
+function updatePasscodeUI() {
+    const dots = document.getElementById('passcode-dots').children;
+    for (let i = 0; i < 4; i++) {
+        if (i < passcodeBuffer.length) dots[i].classList.add('bg-[var(--tg-theme-button-color)]', 'opacity-100');
+        else dots[i].classList.remove('bg-[var(--tg-theme-button-color)]', 'opacity-100');
+    }
 }
 
 async function api(path, options = {}) {
@@ -44,14 +94,8 @@ document.getElementById('btn-store').onclick = () => document.getElementById('st
 
 async function loadFolder(folderId) {
     currentFolderId = folderId;
+    document.getElementById('vault-content').innerHTML = `<div class="flex justify-center items-center h-40"><i class="ph ph-spinner animate-spin text-4xl text-[var(--tg-theme-button-color)]"></i></div>`;
     
-    // SMOOTH LOADING SPINNER
-    document.getElementById('vault-content').innerHTML = `
-        <div class="flex justify-center items-center h-40">
-            <i class="ph ph-spinner animate-spin text-4xl text-[var(--tg-theme-button-color)]"></i>
-        </div>
-    `;
-
     const data = await api(`/vault${folderId ? '?folder_id='+folderId : ''}`);
     rawFolders = data.folders; rawFiles = data.files;
     
@@ -85,7 +129,6 @@ function renderContent() {
 
     fld.forEach(f => {
         const el = document.createElement('div');
-        el.id = `item-folder-${f.id}`;
         el.className = 'bg-[var(--tg-theme-bg-color)] rounded-xl p-3 flex flex-col items-center justify-center cursor-pointer shadow-sm relative text-center transition-all duration-200';
         el.innerHTML = `<div class="checkbox-indicator absolute top-2 right-2 pointer-events-none"></div><i class="ph ph-folder-fill text-5xl text-[var(--tg-theme-button-color)] mb-2"></i><span class="text-xs font-medium line-clamp-2 pointer-events-none">${f.name}</span>`;
         el.onclick = () => selectMode ? toggleSelection('folder', f.id, el) : loadFolder(f.id);
@@ -95,7 +138,6 @@ function renderContent() {
 
     fil.forEach(f => {
         const el = document.createElement('div');
-        el.id = `item-file-${f.id}`;
         el.className = 'bg-[var(--tg-theme-bg-color)] rounded-xl p-3 flex flex-col items-center justify-center cursor-pointer shadow-sm relative text-center transition-all duration-200';
         el.innerHTML = `<div class="checkbox-indicator absolute top-2 right-2 pointer-events-none"></div><i class="ph ${getIconForMime(f.mime_type)} text-5xl text-gray-400 mb-2 pointer-events-none"></i><span class="text-xs font-medium line-clamp-2 pointer-events-none">${f.name}</span><span class="text-[10px] text-[var(--tg-theme-hint-color)] mt-1 pointer-events-none">${formatBytes(f.size)}</span>`;
         el.onclick = () => {
@@ -137,7 +179,6 @@ function bindContextMenu(el, type, id, name) {
 }
 document.addEventListener('click', (e) => { if(!e.target.closest('#context-menu')) document.getElementById('context-menu').classList.add('hidden'); });
 
-// SMOOTH UI SELECTION
 function toggleSelection(type, id, el) {
     if (!selectMode) { 
         selectMode = true; 
@@ -168,21 +209,14 @@ function cancelSelection() {
     document.getElementById('selection-bar').classList.add('translate-y-full'); 
     setTimeout(()=>document.getElementById('selection-bar').classList.add('hidden'), 300); 
     document.getElementById('fab-container').classList.remove('translate-y-40'); 
-    
-    // Smooth checkmark removal without reloading DOM
-    document.querySelectorAll('.ring-2').forEach(el => {
-        el.classList.remove('ring-2', 'ring-[var(--tg-theme-button-color)]');
-        el.querySelector('.checkbox-indicator').innerHTML = '';
-    });
+    document.querySelectorAll('.ring-2').forEach(el => { el.classList.remove('ring-2', 'ring-[var(--tg-theme-button-color)]'); el.querySelector('.checkbox-indicator').innerHTML = ''; });
 }
 
-// MOVE LOGIC (Google Files Style Modal)
 let allFoldersCache = [], targetMoveFolder = null;
 document.getElementById('btn-move').onclick = async () => {
     tg.MainButton.setText("Loading...").show().showProgress();
     allFoldersCache = await api('/folders/all');
-    tg.MainButton.hide();
-    renderMoveModal();
+    tg.MainButton.hide(); renderMoveModal();
     document.getElementById('move-modal').classList.remove('hidden');
     setTimeout(() => document.getElementById('move-modal-content').classList.remove('translate-y-full'), 10);
 };
@@ -191,9 +225,9 @@ function renderMoveModal() {
     const list = document.getElementById('move-folder-list');
     list.innerHTML = `<div class="p-4 mb-2 rounded-xl flex items-center gap-3 cursor-pointer ${targetMoveFolder === null ? 'bg-[var(--tg-theme-button-color)] text-white shadow' : 'bg-gray-100 text-gray-800'}" onclick="setTargetMoveFolder(null)"><i class="ph ph-house text-2xl"></i><span class="font-bold">Root Directory</span></div>`;
     allFoldersCache.forEach(f => {
-        if(selectedFolders.has(f.id)) return; // Hide currently selected folders to prevent errors
+        if(selectedFolders.has(f.id)) return;
         const isSelected = targetMoveFolder === f.id;
-        list.innerHTML += `<div class="p-4 mb-2 rounded-xl flex items-center gap-3 cursor-pointer ${isSelected ? 'bg-[var(--tg-theme-button-color)] text-white shadow' : 'bg-gray-100 text-gray-800'}" onclick="setTargetMoveFolder('${f.id}')"><i class="ph ph-folder-fill text-2xl"></i><span class="font-bold">${f.name}</span></div>`;
+        list.innerHTML += `<div class="p-4 mb-2 rounded-xl flex items-center gap-3 cursor-pointer ${isSelected ? 'bg-[var(--tg-theme-button-color)] text-white shadow' : 'bg-gray-100 text-gray-800'}" onclick="setTargetMoveFolder('${f.id}')"><i class="ph ph-folder-fill text-2xl text-[var(--tg-theme-button-color)]"></i><span class="font-bold">${f.name}</span></div>`;
     });
 }
 function setTargetMoveFolder(id) { targetMoveFolder = id; renderMoveModal(); }
@@ -205,7 +239,6 @@ document.getElementById('btn-confirm-move').onclick = async () => {
     tg.MainButton.hide(); cancelSelection(); loadFolder(currentFolderId);
 };
 
-// ACTIONS
 document.getElementById('btn-bulk-delete').onclick = () => { tg.showConfirm(`Delete items?`, async (ok) => { if(ok) { await api('/bulk/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ file_ids: Array.from(selectedFiles), folder_ids: Array.from(selectedFolders) }) }); updateStorage(); cancelSelection(); loadFolder(currentFolderId); } }); };
 document.getElementById('btn-zip').onclick = () => { if (selectedFiles.size === 0) { return tg.showAlert("Please select files to ZIP."); } const ids = Array.from(selectedFiles).join(','); tg.openLink(`${window.location.origin}${API_BASE}/bulk/zip?ids=${ids}&token=${jwtToken}`); cancelSelection(); };
 
