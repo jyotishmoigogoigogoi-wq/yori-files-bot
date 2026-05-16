@@ -36,7 +36,8 @@
 
     <!-- Main App -->
     <div id="app" class="hidden flex flex-col h-screen bg-[var(--tg-theme-secondary-bg-color)]">
-        <!-- Header -->
+        
+        <!-- Header (Clean, No Settings Gear) -->
         <header class="bg-[var(--tg-theme-bg-color)] px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-10">
             <div class="flex items-center gap-2 overflow-x-auto no-scrollbar whitespace-nowrap" id="breadcrumbs">
                 <!-- JS populated -->
@@ -44,7 +45,7 @@
         </header>
 
         <!-- Content List -->
-        <main class="flex-1 overflow-y-auto p-4 pb-24" id="vault-content">
+        <main class="flex-1 overflow-y-auto p-4 pb-32" id="vault-content">
             <!-- Grid/List injected here -->
         </main>
 
@@ -53,22 +54,37 @@
             Made by <a href="https://t.me/YoriFederation" target="_blank" class="text-[var(--tg-theme-button-color)]">Yori Federation</a>
         </div>
 
+        <!-- Selection Action Bar (Hidden by default) -->
+        <div id="selection-bar" class="hidden fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] p-4 px-6 flex items-center justify-between z-30 border-t border-[var(--tg-theme-hint-color)] border-opacity-20 transition-transform duration-200 translate-y-full">
+            <div class="text-[var(--tg-theme-text-color)] font-medium">
+                <span id="selected-count">0</span> Selected
+            </div>
+            <div class="flex gap-4">
+                <button id="btn-zip" class="text-[var(--tg-theme-button-color)] flex flex-col items-center active:opacity-70">
+                    <i class="ph ph-file-zip text-2xl"></i>
+                    <span class="text-[10px]">ZIP</span>
+                </button>
+                <button id="btn-bulk-delete" class="text-red-500 flex flex-col items-center active:opacity-70">
+                    <i class="ph ph-trash text-2xl"></i>
+                    <span class="text-[10px]">Delete</span>
+                </button>
+                <button id="btn-cancel-select" class="text-[var(--tg-theme-hint-color)] flex flex-col items-center active:opacity-70">
+                    <i class="ph ph-x-circle text-2xl"></i>
+                    <span class="text-[10px]">Cancel</span>
+                </button>
+            </div>
+        </div>
+
         <!-- FABs -->
-        <div class="fixed bottom-6 right-6 flex flex-col gap-3 z-20">
-            <button id="btn-create-folder" class="w-12 h-12 bg-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-text-color)] rounded-full shadow-lg flex items-center justify-center">
+        <div id="fab-container" class="fixed bottom-6 right-6 flex flex-col gap-3 z-20 transition-transform duration-200">
+            <button id="btn-create-folder" class="w-12 h-12 bg-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-text-color)] rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform">
                 <i class="ph ph-folder-plus text-2xl"></i>
             </button>
-            <button id="btn-upload" class="w-14 h-14 bg-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-text-color)] rounded-full shadow-lg flex items-center justify-center relative">
+            <button id="btn-upload" class="w-14 h-14 bg-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-text-color)] rounded-full shadow-lg flex items-center justify-center relative active:scale-95 transition-transform">
                 <i class="ph ph-upload-simple text-3xl"></i>
                 <input type="file" id="file-input" class="absolute inset-0 opacity-0 cursor-pointer" multiple>
             </button>
         </div>
-    </div>
-
-    <!-- Context Menu Overlay -->
-    <div id="context-menu" class="hidden fixed bg-[var(--tg-theme-bg-color)] shadow-xl rounded-xl py-2 z-50 border border-[var(--tg-theme-hint-color)] border-opacity-20 text-[var(--tg-theme-text-color)] text-sm min-w-[160px]">
-        <div id="ctx-download" class="px-4 py-3 flex items-center gap-3 active:bg-[var(--tg-theme-secondary-bg-color)]"><i class="ph ph-download-simple text-lg"></i> Download</div>
-        <div id="ctx-delete" class="px-4 py-3 flex items-center gap-3 text-red-500 active:bg-[var(--tg-theme-secondary-bg-color)]"><i class="ph ph-trash text-lg"></i> Delete</div>
     </div>
 
     <script src="/static/app.js"></script>
