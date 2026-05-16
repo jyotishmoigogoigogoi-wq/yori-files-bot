@@ -14,6 +14,14 @@ import httpx
 
 router = APIRouter()
 
+# ------------------- Constants -------------------
+MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+MAX_BULK_FILES = 20
+MAX_BULK_SIZE_BYTES = 50 * 1024 * 1024
+
+# ------------------- Auth -------------------
 class AuthRequest(BaseModel):
     initData: str
 
@@ -33,6 +41,7 @@ async def authenticate(req: AuthRequest):
     token = create_jwt(tg_id, unlocked=not has_passcode)
     return {"token": token, "has_passcode": has_passcode}
 
+# ------------------- Passcode Lock -------------------
 class PasscodeRequest(BaseModel):
     passcode: str
 
@@ -54,6 +63,7 @@ async def set_lock(req: PasscodeRequest, user=Depends(get_current_user)):
     await users_col.update_one({"tg_id": user["tg_id"]}, {"$set": {"passcode_hash": hashed}})
     return {"success": True}
 
+# ------------------- Vault Listing -------------------
 @router.get("/api/vault")
 async def get_vault(folder_id: Optional[str] = None, user=Depends(get_current_user)):
     if not user["unlocked"]:
@@ -79,6 +89,7 @@ async def get_vault(folder_id: Optional[str] = None, user=Depends(get_current_us
         "breadcrumbs": breadcrumbs
     }
 
+# ------------------- Folder Management -------------------
 class FolderCreate(BaseModel):
     name: str
     parent_id: Optional[str] = None
@@ -96,27 +107,32 @@ async def delete_folder(folder_id: str, user=Depends(get_current_user)):
     if not user["unlocked"]:
         raise HTTPException(status_code=403, detail="Vault is locked")
     
-    # Recursive deletion utility
     async def delete_recursive(f_id: str):
         sub_folders = await folders_col.find({"parent_id": f_id}).to_list(None)
         for sf in sub_folders:
             await delete_recursive(sf["id"])
-        
-        # Delete files in folder (Telegram messages technically stay in channel, but DB drops)
         await files_col.delete_many({"folder_id": f_id})
         await folders_col.delete_one({"id": f_id})
 
     await delete_recursive(folder_id)
     return {"success": True}
 
+# ------------------- File Upload (with size limit) -------------------
 @router.post("/api/files/upload")
 async def upload_file_api(file: UploadFile = File(...), folder_id: Optional[str] = Form(None), user=Depends(get_current_user)):
     if not user["unlocked"]:
         raise HTTPException(status_code=403, detail="Vault is locked")
-        
-    content = await file.read()
-    input_file = BufferedInputFile(content, filename=file.filename)
     
+    # Read file content and check size
+    content = await file.read()
+    file_size = len(content)
+    if file_size > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB} MB. Your file is {file_size / (1024*1024):.1f} MB."
+        )
+    
+    input_file = BufferedInputFile(content, filename=file.filename)
     msg = await bot.send_document(chat_id=settings.STORAGE_CHANNEL_ID, document=input_file)
     
     new_file = VaultFile(
@@ -124,7 +140,7 @@ async def upload_file_api(file: UploadFile = File(...), folder_id: Optional[str]
         folder_id=folder_id if folder_id != "null" else None,
         filename=file.filename,
         mime_type=file.content_type or "application/octet-stream",
-        size=len(content),
+        size=file_size,
         file_id=msg.document.file_id,
         file_unique_id=msg.document.file_unique_id,
         message_id=msg.message_id
@@ -132,21 +148,23 @@ async def upload_file_api(file: UploadFile = File(...), folder_id: Optional[str]
     await files_col.insert_one(new_file.model_dump())
     return {"success": True, "id": new_file.id}
 
+# ------------------- File Delete -------------------
 @router.delete("/api/files/{file_id}")
 async def delete_file(file_id: str, user=Depends(get_current_user)):
-    if not user["unlocked"]: raise HTTPException(status_code=403)
+    if not user["unlocked"]: 
+        raise HTTPException(status_code=403)
     file_record = await files_col.find_one({"id": file_id, "owner_id": user["tg_id"]})
     if file_record:
         try:
             await bot.delete_message(chat_id=settings.STORAGE_CHANNEL_ID, message_id=file_record["message_id"])
         except:
-            pass # Ignore if too old to delete via Bot API
+            pass
         await files_col.delete_one({"id": file_id})
     return {"success": True}
 
+# ------------------- Single File Download -------------------
 @router.get("/api/files/download/{file_id}")
 async def download_file(file_id: str, token: str):
-    # Authenticate via query param for direct downloads
     from utils import decode_jwt
     payload = decode_jwt(token)
     if not payload or not payload.get("unlocked"):
@@ -171,12 +189,9 @@ async def download_file(file_id: str, token: str):
         headers={"Content-Disposition": f'attachment; filename="{file_record["filename"]}"'}
     )
 
-# ---------- Bulk Download (ZIP) with Limits ----------
+# ------------------- Bulk Download (ZIP) with Limits -------------------
 class BulkDownloadRequest(BaseModel):
     file_ids: list[str]
-
-MAX_BULK_FILES = 20
-MAX_BULK_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 @router.post("/api/files/bulk-download")
 async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current_user)):
@@ -186,14 +201,12 @@ async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current
     if not req.file_ids:
         raise HTTPException(status_code=400, detail="No file IDs provided")
     
-    # Limit number of files
     if len(req.file_ids) > MAX_BULK_FILES:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Too many files selected. Maximum {MAX_BULK_FILES} files per ZIP download."
         )
     
-    # Fetch all file records for the user
     file_records = await files_col.find({
         "id": {"$in": req.file_ids},
         "owner_id": user["tg_id"]
@@ -202,7 +215,6 @@ async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current
     if not file_records:
         raise HTTPException(status_code=404, detail="No files found")
     
-    # Check total size
     total_size = sum(f["size"] for f in file_records)
     if total_size > MAX_BULK_SIZE_BYTES:
         raise HTTPException(
@@ -210,17 +222,13 @@ async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current
             detail=f"Total file size ({total_size / (1024*1024):.1f} MB) exceeds limit of 50 MB. Please select fewer or smaller files."
         )
     
-    # Create in-memory ZIP
+    # Create ZIP in memory
     zip_buffer = io.BytesIO()
-    
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for file_record in file_records:
             try:
-                # Get file from Telegram
                 tg_file = await bot.get_file(file_record["file_id"])
                 file_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{tg_file.file_path}"
-                
-                # Download file content
                 async with httpx.AsyncClient() as client:
                     response = await client.get(file_url)
                     if response.status_code == 200:
@@ -236,16 +244,11 @@ async def bulk_download_files(req: BulkDownloadRequest, user=Depends(get_current
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=vault_export.zip"}
     )
-    # Prepare ZIP response
-    zip_buffer.seek(0)
-    return StreamingResponse(
-        zip_buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=vault_export.zip"}
-    )
 
+# ------------------- Share Info -------------------
 @router.get("/api/share/info")
 async def get_share_info(user=Depends(get_current_user)):
-    if not user["unlocked"]: raise HTTPException(status_code=403)
+    if not user["unlocked"]: 
+        raise HTTPException(status_code=403)
     user_db = await users_col.find_one({"tg_id": user["tg_id"]})
     return {"share_token": user_db["share_token"]}
