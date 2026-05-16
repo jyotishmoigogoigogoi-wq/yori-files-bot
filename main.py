@@ -19,6 +19,11 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(api_router)
 
+# --- UPTIMEROBOT HEALTH PING ---
+@app.get("/ping")
+async def ping_server():
+    return {"status": "alive"}
+
 @app.get("/")
 async def root(): return FileResponse("templates/index.html")
 
