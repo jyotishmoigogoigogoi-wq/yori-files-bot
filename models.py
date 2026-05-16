@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 import uuid
 
@@ -13,6 +13,8 @@ class User(BaseModel):
     passcode_hash: Optional[str] = None
     share_token: str = Field(default_factory=generate_id)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    storage_limit: int = 50 * 1024 * 1024 * 1024  # 50 GB default
+    storage_used: int = 0
 
 class Folder(BaseModel):
     id: str = Field(default_factory=generate_id)
