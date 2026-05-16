@@ -172,7 +172,16 @@ document.getElementById('btn-do-paste').onclick = async () => {
 
 // Bulk Delete
 document.getElementById('btn-bulk-delete').onclick = () => { tg.showConfirm(`Delete items?`, async (ok) => { if(ok) { await api('/bulk/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ file_ids: Array.from(selectedFiles), folder_ids: Array.from(selectedFolders) }) }); updateStorage(); cancelSelection(); loadFolder(currentFolderId); } }); };
-
+document.getElementById('btn-zip').onclick = () => {
+    if (selectedFiles.size === 0) {
+        tg.showAlert("Please select at least one file to ZIP.");
+        return;
+    }
+    const ids = Array.from(selectedFiles).join(',');
+    const dlUrl = `${window.location.origin}${API_BASE}/bulk/zip?ids=${ids}&token=${jwtToken}`;
+    tg.openLink(dlUrl);
+    cancelSelection();
+};
 // Folders & Upload
 document.getElementById('btn-create-folder').onclick = () => { const name = prompt("Folder Name:"); if(name) api('/folders', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, parent_id:currentFolderId})}).then(()=>loadFolder(currentFolderId)); };
 document.getElementById('file-input').onchange = async (e) => {
