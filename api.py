@@ -151,17 +151,34 @@ async def download_file(file_id: str, token: str):
 async def get_admin_data(user=Depends(get_current_user)):
     if user["tg_id"] != ADMIN_ID: raise HTTPException(403)
     users = await users_col.find({}, {"tg_id": 1, "storage_used": 1, "storage_limit": 1, "username": 1}).to_list(None)
-    for u in users: u["_id"] = str(u["_id"])
+    for u in users: 
+        u["_id"] = str(u["_id"])
+        # FIX: Ensure old users display 50GB default in Admin Panel
+        if "storage_limit" not in u:
+            u["storage_limit"] = 50 * 1024 * 1024 * 1024
+            
     return {"total_users": len(users), "total_used": sum(u.get("storage_used", 0) for u in users), "users": users}
 
 class GrantReq(BaseModel): tg_id: int; gb: int
 @router.post("/api/admin/grant")
 async def grant_storage(req: GrantReq, user=Depends(get_current_user)):
     if user["tg_id"] != ADMIN_ID: raise HTTPException(403)
+    
+    # 1. Find the target user
+    target_user = await users_col.find_one({"tg_id": req.tg_id})
+    if not target_user: raise HTTPException(404, "User not found")
+    
+    # 2. FIX: Safely get current limit (Default to 50GB if they are an old user)
+    current_limit = target_user.get("storage_limit", 50 * 1024 * 1024 * 1024)
     bytes_to_add = req.gb * 1024 * 1024 * 1024
-    res = await users_col.update_one({"tg_id": req.tg_id}, {"$inc": {"storage_limit": bytes_to_add}})
-    if res.modified_count:
+    new_limit = current_limit + bytes_to_add
+    
+    # 3. Save the new combined limit
+    res = await users_col.update_one({"tg_id": req.tg_id}, {"$set": {"storage_limit": new_limit}})
+    
+    if res.modified_count or res.matched_count:
         try: await bot.send_message(req.tg_id, f"🎉 <b>Premium Upgrade!</b>\n\nYou have got an extra <b>{req.gb} GB</b> of storage!\nThank you for supporting 💕 @yorifederation", parse_mode="HTML")
         except: pass
         return {"success": True}
+        
     raise HTTPException(404, "User not found")
