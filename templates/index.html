@@ -10,6 +10,26 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="antialiased bg-[var(--tg-theme-secondary-bg-color)]">
+    
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[var(--tg-theme-bg-color)]">
+        <div class="animate-spin text-4xl text-[var(--tg-theme-button-color)] mb-4"><i class="ph ph-circle-notch"></i></div>
+        <div class="text-[var(--tg-theme-text-color)] font-medium text-lg">Decrypting Vault...</div>
+    </div>
+
+    <!-- Lock Screen -->
+    <div id="lock-screen" class="hidden fixed inset-0 z-[90] flex flex-col items-center justify-center bg-[var(--tg-theme-bg-color)] px-6">
+        <i class="ph ph-lock-key text-6xl text-[var(--tg-theme-button-color)] mb-6"></i>
+        <h2 class="text-2xl font-bold text-[var(--tg-theme-text-color)] mb-8">Enter Passcode</h2>
+        <div class="flex gap-4 mb-8" id="passcode-dots">
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+            <div class="w-4 h-4 rounded-full bg-[var(--tg-theme-hint-color)] opacity-30"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-6 text-2xl font-medium text-[var(--tg-theme-text-color)]" id="numpad"></div>
+    </div>
+
     <!-- Main App -->
     <div id="app" class="hidden flex flex-col h-screen">
         
@@ -35,7 +55,7 @@
             </div>
         </header>
 
-        <!-- Selection Overlay Header (Google Files Style) -->
+        <!-- Selection Overlay Header -->
         <header id="select-header" class="hidden bg-[var(--tg-theme-button-color)] text-white px-4 py-4 shadow-md sticky top-0 z-20 flex items-center justify-between">
             <div class="flex items-center gap-4">
                 <i class="ph ph-x text-2xl cursor-pointer" onclick="cancelSelection()"></i>
@@ -46,7 +66,7 @@
 
         <main class="flex-1 overflow-y-auto p-4 pb-32" id="vault-content"></main>
 
-        <!-- Selection Bottom Action Bar (Huge Native Buttons) -->
+        <!-- Selection Bottom Action Bar -->
         <div id="selection-bar" class="hidden fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color)] shadow-[0_-10px_20px_rgba(0,0,0,0.1)] pt-4 pb-8 px-6 flex items-center justify-between z-30 border-t border-[var(--tg-theme-hint-color)] border-opacity-20 transition-transform duration-300 translate-y-full">
             <button id="btn-move" class="flex flex-col items-center text-[var(--tg-theme-text-color)] active:scale-90 transition-transform"><i class="ph ph-folder-simple-dashed text-[32px] mb-1"></i><span class="text-sm font-medium">Move</span></button>
             <button id="btn-zip" class="flex flex-col items-center text-[var(--tg-theme-button-color)] active:scale-90 transition-transform"><i class="ph ph-file-zip text-[32px] mb-1"></i><span class="text-sm font-medium">ZIP</span></button>
@@ -60,16 +80,14 @@
                     <h3 class="font-bold text-lg text-[var(--tg-theme-text-color)]">Move to...</h3>
                     <i class="ph ph-x text-2xl text-[var(--tg-theme-hint-color)] cursor-pointer bg-[var(--tg-theme-secondary-bg-color)] rounded-full p-1" onclick="closeMoveModal()"></i>
                 </div>
-                <div class="flex-1 overflow-y-auto p-4" id="move-folder-list">
-                    <!-- Folders injected here -->
-                </div>
+                <div class="flex-1 overflow-y-auto p-4" id="move-folder-list"></div>
                 <div class="p-4 border-t border-[var(--tg-theme-hint-color)] border-opacity-20 bg-[var(--tg-theme-secondary-bg-color)]">
                     <button id="btn-confirm-move" class="w-full bg-[var(--tg-theme-button-color)] text-white font-bold py-3.5 text-lg rounded-xl shadow-lg active:scale-95 transition-transform">Move Here</button>
                 </div>
             </div>
         </div>
 
-        <!-- Modals and Overlays -->
+        <!-- Store Modal -->
         <div id="store-modal" class="hidden fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
             <div class="bg-[var(--tg-theme-bg-color)] w-full max-w-sm rounded-xl p-6 text-center shadow-xl">
                 <i class="ph ph-crown text-5xl text-yellow-500 mb-2"></i>
@@ -78,7 +96,7 @@
                     <button class="w-full border border-[var(--tg-theme-button-color)] text-[var(--tg-theme-button-color)] rounded-lg py-2 font-bold">+5 GB (159 INR)</button>
                     <button class="w-full bg-[var(--tg-theme-button-color)] text-white rounded-lg py-2 font-bold shadow">+10 GB (200 INR)</button>
                 </div>
-                <a href="https://t.me/yorichiiprime" target="_blank" class="block w-full bg-gray-800 text-white rounded-lg py-3 font-bold mb-3"><i class="ph ph-telegram-logo mr-1"></i> Contact Admin to Buy</a>
+                <a href="https://t.me/yorichiiprime" target="_blank" class="block w-full bg-gray-800 text-white rounded-lg py-3 font-bold mb-3"><i class="ph ph-telegram-logo mr-1"></i> Contact Admin</a>
                 <button onclick="document.getElementById('store-modal').classList.add('hidden')" class="text-[var(--tg-theme-hint-color)] text-sm">Close</button>
             </div>
         </div>
