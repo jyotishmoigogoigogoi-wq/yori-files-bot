@@ -17,6 +17,10 @@ ADMIN_ID = 7728424218
 # Hardcoded channel link
 CHANNEL_LINK = "https://t.me/YoriFederation"   # ← change if needed
 
+# File size limit (50 MB)
+MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
 # ---------- /start (aesthetic + channel button) ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -31,12 +35,12 @@ async def cmd_start(message: types.Message):
     ])
 
     welcome_text = (
-    "✨ ʏᴏʀɪ ᴠᴀᴜʟᴛ — sᴇᴄᴜʀᴇ ᴛᴇʟᴇɢʀᴀᴍ‑ɴᴀᴛɪᴠᴇ ᴄʟᴏᴜᴅ\n\n"
-    "• sᴛᴏʀᴇ ғɪʟᴇs ɪɴ ғᴏʟᴅᴇʀs\n"
-    "• 🔒 ᴘᴀssᴄᴏᴅᴇ ᴘʀᴏᴛᴇᴄᴛɪᴏɴ\n"
-    "• ғᴀsᴛ, ᴘʀɪᴠᴀᴛᴇ, ʙᴜɪʟᴛ ᴏɴ ᴛɢ\n\n"
-    "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-    "ᴍᴀᴅᴇ ᴡɪᴛʜ 💕 ʙʏ [ʏᴏʀɪ ғᴇᴅᴇʀᴀᴛɪᴏɴ](https://t.me/YoriFederation)"
+        "✨ ʏᴏʀɪ ᴠᴀᴜʟᴛ — sᴇᴄᴜʀᴇ ᴛᴇʟᴇɢʀᴀᴍ‑ɴᴀᴛɪᴠᴇ ᴄʟᴏᴜᴅ\n\n"
+        "• sᴛᴏʀᴇ ғɪʟᴇs ɪɴ ғᴏʟᴅᴇʀs\n"
+        "• 🔒 ᴘᴀssᴄᴏᴅᴇ ᴘʀᴏᴛᴇᴄᴛɪᴏɴ\n"
+        "• ғᴀsᴛ, ᴘʀɪᴠᴀᴛᴇ, ʙᴜɪʟᴛ ᴏɴ ᴛɢ\n\n"
+        "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+        "ᴍᴀᴅᴇ ᴡɪᴛʜ 🧡 ʙʏ [ʏᴏʀɪ ғᴇᴅᴇʀᴀᴛɪᴏɴ](https://t.me/YoriFederation)"
     )
     await message.answer(welcome_text, reply_markup=markup, parse_mode="Markdown")
 
@@ -153,7 +157,7 @@ async def broadcast_callback(callback: types.CallbackQuery):
     await status_msg.edit_text(f"📢 **broadcast finished**\n\n✅ Sent to `{success}` users\n❌ Failed (blocked/invalid): `{failed}`", parse_mode="Markdown")
     broadcast_data.pop(callback.from_user.id, None)
 
-# ---------- file upload handler (unchanged) ----------
+# ---------- File Upload Handler (with size limit) ----------
 @dp.message(F.document | F.photo | F.video | F.audio)
 async def handle_uploads(message: types.Message):
     user_data = await users_col.find_one({"tg_id": message.from_user.id})
@@ -161,35 +165,52 @@ async def handle_uploads(message: types.Message):
         await message.answer("Please /start the bot first.")
         return
 
-    copied_msg = await message.copy_to(chat_id=settings.STORAGE_CHANNEL_ID)
-
-    file_id = file_unique_id = filename = mime_type = None
+    # Determine file size before forwarding
     size = 0
+    if message.document:
+        size = message.document.file_size
+    elif message.photo:
+        size = message.photo[-1].file_size
+    elif message.video:
+        size = message.video.file_size
+    elif message.audio:
+        size = message.audio.file_size
+
+    # Check size limit
+    if size > MAX_FILE_SIZE_BYTES:
+        await message.reply(f"❌ File too large. Maximum size is {MAX_FILE_SIZE_MB} MB. Your file is {size / (1024*1024):.1f} MB.")
+        return
+
+    # Forward to storage channel
+    copied_msg = await message.copy_to(chat_id=settings.STORAGE_CHANNEL_ID)
+    
+    # Extract file metadata
+    file_id = None
+    file_unique_id = None
+    filename = "Untitled"
+    mime_type = "application/octet-stream"
+
     if message.document:
         file_id = message.document.file_id
         file_unique_id = message.document.file_unique_id
         filename = message.document.file_name or "document"
         mime_type = message.document.mime_type
-        size = message.document.file_size
     elif message.photo:
         photo = message.photo[-1]
         file_id = photo.file_id
         file_unique_id = photo.file_unique_id
         filename = f"photo_{message.message_id}.jpg"
         mime_type = "image/jpeg"
-        size = photo.file_size
     elif message.video:
         file_id = message.video.file_id
         file_unique_id = message.video.file_unique_id
         filename = message.video.file_name or f"video_{message.message_id}.mp4"
         mime_type = message.video.mime_type
-        size = message.video.file_size
     elif message.audio:
         file_id = message.audio.file_id
         file_unique_id = message.audio.file_unique_id
         filename = message.audio.file_name or f"audio_{message.message_id}.mp3"
         mime_type = message.audio.mime_type
-        size = message.audio.file_size
 
     new_file = VaultFile(
         owner_id=message.from_user.id,
